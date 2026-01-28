@@ -1,0 +1,169 @@
+
+-Goal-
+Given a text document that is potentially relevant to this activity, first identify all entities needed from the text in order to capture the information and ideas in the text.
+Next, report all relationships among the identified entities.
+
+-Steps-
+1. Identify all entities. For each identified entity, extract the following information:
+- entity_name: Name of the entity, capitalized
+- entity_type: Suggest several labels or categories for the entity. The categories should not be specific, but should be as general as possible.
+- entity_description: Comprehensive description of the entity's attributes and activities
+Format each entity as ("entity"{tuple_delimiter}<entity_name>{tuple_delimiter}<entity_type>{tuple_delimiter}<entity_description>)
+
+2. From the entities identified in step 1, identify all pairs of (source_entity, target_entity) that are *clearly related* to each other.
+For each pair of related entities, extract the following information:
+- source_entity: name of the source entity, as identified in step 1
+- target_entity: name of the target entity, as identified in step 1
+- relationship_description: explanation as to why you think the source entity and the target entity are related to each other
+- relationship_strength: a numeric score indicating strength of the relationship between the source entity and target entity
+Format each relationship as ("relationship"{tuple_delimiter}<source_entity>{tuple_delimiter}<target_entity>{tuple_delimiter}<relationship_description>{tuple_delimiter}<relationship_strength>)
+
+3. Return output in Chinese as a single list of all the entities and relationships identified in steps 1 and 2. Use **{record_delimiter}** as the list delimiter.
+
+4. If you have to translate into Chinese, just translate the descriptions, nothing else!
+
+5. When finished, output {completion_delimiter}.
+
+-Examples-
+######################
+
+Example 1:
+
+text:
+为了七玄门近年来一再扩招门内弟子的主要原因。
+
+马车上跳下一名四十多岁的瘦削汉子，这名汉子动作敏捷，明显身手不弱，对这里似乎也很熟悉，大踏步直奔韩理所在的屋子走去。
+
+韩立三叔一见这人，立刻恭恭敬敬的上前施了一个礼。
+
+“王护法，您老人家怎吗亲自带人来了？”
+
+“哼！”王护法冷哼了一声，一脸的傲色。
+
+“这段时间路上不太平，要加强防卫，长老命我亲自来领人，废话少说，这个小孩就是你要推举的人？”
+
+“是的，是的，这是我本家的亲侄子，还望王护法路上多照应一下。”
+
+韩胖子看到这汉子神色有些不耐烦，麻利的从身上取出个沉甸甸的袋子隐秘的递了过去
+
+王护法掂了掂袋子，神色有些缓松了下来。
+
+“韩胖子，你挺会做人吗！你侄子我路上自会照顾一二的，时间不早了，还是赶紧上路吧。”
+------------------------
+output:
+("entity"{tuple_delimiter}七玄门{tuple_delimiter}ORGANIZATION{tuple_delimiter}七玄门是小说中一个修真门派，近年来不断扩招弟子")
+{record_delimiter}
+("entity"{tuple_delimiter}韩立{tuple_delimiter}PERSON{tuple_delimiter}韩立是小说中的主角，被三叔推荐给七玄门")
+{record_delimiter}
+("entity"{tuple_delimiter}韩胖子{tuple_delimiter}PERSON{tuple_delimiter}韩立的三叔，负责将韩立推荐给七玄门")
+{record_delimiter}
+("entity"{tuple_delimiter}王护法{tuple_delimiter}PERSON{tuple_delimiter}七玄门的护法，负责接引韩立前往门派")
+{record_delimiter}
+("entity"{tuple_delimiter}马车{tuple_delimiter}OBJECT{tuple_delimiter}王护法乘坐的交通工具")
+{record_delimiter}
+("relationship"{tuple_delimiter}韩胖子{tuple_delimiter}王护法{tuple_delimiter}韩胖子为了让王护法照顾韩立，私下送礼以示诚意{tuple_delimiter}7)
+{record_delimiter}
+("relationship"{tuple_delimiter}韩立{tuple_delimiter}王护法{tuple_delimiter}王护法受命带韩立前往七玄门，负责其安全{tuple_delimiter}8)
+{record_delimiter}
+("relationship"{tuple_delimiter}韩立{tuple_delimiter}七玄门{tuple_delimiter}韩立是七玄门新招收的弟子，被王护法带往门派{tuple_delimiter}9)
+{record_delimiter}
+("relationship"{tuple_delimiter}韩胖子{tuple_delimiter}韩立{tuple_delimiter}韩胖子是韩立的三叔，负责推荐并安排其前往七玄门{tuple_delimiter}7)
+{record_delimiter}
+("relationship"{tuple_delimiter}王护法{tuple_delimiter}七玄门{tuple_delimiter}王护法是七玄门的成员，负责执行长老的命令接引弟子{tuple_delimiter}8)
+{record_delimiter}
+("relationship"{tuple_delimiter}马车{tuple_delimiter}王护法{tuple_delimiter}王护法乘坐马车来到韩立所在的地方，准备接引韩立{tuple_delimiter}6)
+{completion_delimiter}
+#############################
+
+
+Example 2:
+
+text:
+第二章 青牛镇
+
+这是一个小城，说是小城其实只是一个大点的镇子，名字也叫青牛镇，只有那些住在附近山沟里、没啥见识的土人，才“青牛城”“青牛城”的叫个不停。这是干了十几年门丁张二的心里话。
+
+青牛镇的确不大，主街道只有一条东西方向的青牛街，连客栈也只有一家青牛客栈，客栈坐落在长条形状的镇子的西端，所以过往的商客不想露宿野外的话，也只能住在这里。
+
+现在有一辆一看就是赶了不少路的马车，从西边驶入青牛镇，飞快的驶过青牛客栈的大门前，停都不停，一直飞驰到镇子的另一端，春香酒楼的门口前，才停了下来。
+
+春香酒楼不算大，甚至还有些陈旧，但却有一种古色古香的韵味。因为现在正是午饭时分，酒楼里用饭的客人还很多，几乎称的上是座无虚席。
+
+从车上下来一个圆脸带着小胡子的胖男子和一个皮肤黝黑的、十来岁的小孩，男子带着孩童直接就大摇大摆地进了酒楼。有酒楼里的熟客认得胖子，知道他是这个酒楼的掌柜“韩胖子”，那个小孩是谁却无人认得。
+
+“老韩，这个黑小子长的和你很像，不会是你背着家里婆娘生的儿子吧。”有个人突然打趣道。
+
+这句话一出，惹的旁边的众人人哈哈一阵大笑。
+
+“呸！这是我本家带来的亲侄子，当然和我有几分像了。”胖子不但没生气，还有几分得意。
+
+这二人正是一连赶了三天路，才刚进镇子的韩立和他的三叔别人口中的“韩胖子”。
+
+韩胖子招呼了几位熟客一声，便把韩立带到酒楼后面，来到了一个偏僻小院子里。
+
+“小立，你在这屋里好好休息下，养好精神，等内门的管事一来，我就叫你过去，我要先出去一下，招呼几位熟客。”韩胖子指着院里的厢房，和蔼的对他说道。
+
+说完，便转身匆忙地向外走去。
+
+到门口时，他似乎心里又有些不太放心，又嘱咐了一句。
+
+“别乱跑啊，镇子里人太多，别走丢了，最好别出院子。”
+
+“恩！”
+
+看到韩立老实的答应了一声，他才真正放心的走了出去。
+
+韩立见到三叔走出了屋子，感到很累，便一头倒到床上呼呼的睡了起来，竟然没有一点小孩子怕生的感觉。
+
+到晚上，有个小厮送来了饭菜，虽然不是大鱼大肉，倒也算是可口。吃完后，一小厮又走了进来，把吃剩饭碗给端了出去，这时三叔才不慌不忙的走了进来。
+
+“怎么样，饭菜还合你胃口吧，有些想家了吧？”
+
+“恩，有点想了，好看的小说:无尽剑界最新章节。”韩立显的很乖巧。
+
+三叔看起来
+------------------------
+output:
+("entity"{tuple_delimiter}QINGNIU TOWN{tuple_delimiter}GEO{tuple_delimiter}一个小镇，名为青牛镇，只有附近山沟里的土人称其为“青牛城”)
+{record_delimiter}
+("entity"{tuple_delimiter}ZHANG ER{tuple_delimiter}PERSON{tuple_delimiter}在青牛镇干了十几年门丁的人，对镇子有深入了解)
+{record_delimiter}
+("entity"{tuple_delimiter}QINGNIU STREET{tuple_delimiter}GEO{tuple_delimiter}青牛镇的主街道，东西方向，只有一条)
+{record_delimiter}
+("entity"{tuple_delimiter}QINGNIU INN{tuple_delimiter}GEO{tuple_delimiter}青牛镇唯一的客栈，位于镇子西端)
+{record_delimiter}
+("entity"{tuple_delimiter}CHUNXIANG RESTAURANT{tuple_delimiter}GEO{tuple_delimiter}青牛镇的一家酒楼，位于镇子另一端，古色古香)
+{record_delimiter}
+("entity"{tuple_delimiter}HAN FEI{tuple_delimiter}PERSON{tuple_delimiter}韩胖子，春香酒楼的掌柜，圆脸带小胡子的胖男子)
+{record_delimiter}
+("entity"{tuple_delimiter}HAN LI{tuple_delimiter}PERSON{tuple_delimiter}皮肤黝黑的十来岁小孩，韩胖子的亲侄子)
+{record_delimiter}
+("entity"{tuple_delimiter}HAN FEI'S UNCLE{tuple_delimiter}PERSON{tuple_delimiter}韩立的三叔，被称为“韩胖子”，是他的监护人)
+{record_delimiter}
+("relationship"{tuple_delimiter}HAN FEI{tuple_delimiter}HAN LI{tuple_delimiter}韩胖子是韩立的三叔，两人是亲属关系{tuple_delimiter}8)
+{record_delimiter}
+("relationship"{tuple_delimiter}HAN FEI{tuple_delimiter}CHUNXIANG RESTAURANT{tuple_delimiter}韩胖子是春香酒楼的掌柜，管理该酒楼{tuple_delimiter}7)
+{record_delimiter}
+("relationship"{tuple_delimiter}HAN FEI{tuple_delimiter}QINGNIU TOWN{tuple_delimiter}韩胖子是青牛镇的居民，长期居住于此{tuple_delimiter}6)
+{record_delimiter}
+("relationship"{tuple_delimiter}HAN LI{tuple_delimiter}QINGNIU TOWN{tuple_delimiter}韩立来到青牛镇，是为寻找内门管事{tuple_delimiter}5)
+{record_delimiter}
+("relationship"{tuple_delimiter}HAN FEI{tuple_delimiter}QINGNIU INN{tuple_delimiter}韩胖子可能曾住在青牛客栈，但文中未明确说明{tuple_delimiter}3)
+{record_delimiter}
+("relationship"{tuple_delimiter}HAN FEI{tuple_delimiter}QINGNIU STREET{tuple_delimiter}韩胖子和韩立进入青牛镇后，经过青牛街{tuple_delimiter}4)
+{record_delimiter}
+("relationship"{tuple_delimiter}HAN FEI{tuple_delimiter}ZHANG ER{tuple_delimiter}张二对青牛镇有深刻了解，韩胖子可能与他有交集{tuple_delimiter}2)
+{record_delimiter}
+("relationship"{tuple_delimiter}HAN LI{tuple_delimiter}CHUNXIANG RESTAURANT{tuple_delimiter}韩立被带到春香酒楼后，住在酒楼后面的院子里{tuple_delimiter}7)
+{record_delimiter}
+("relationship"{tuple_delimiter}HAN FEI{tuple_delimiter}HAN LI'S UNCLE{tuple_delimiter}韩胖子是韩立的三叔，两人是亲属关系{tuple_delimiter}8)
+{completion_delimiter}
+#############################
+
+
+
+-Real Data-
+######################
+text: {input_text}
+######################
+output:

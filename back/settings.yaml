@@ -1,0 +1,146 @@
+### 此配置文件包含必须设置的必需核心默认值，以及一些常见的可选设置。
+### 有关可用设置的完整列表，请参见 https://microsoft.github.io/graphrag/config/yaml/
+
+### LLM 设置 ###
+## 有多个设置可以调整 LLM 调用的线程和令牌限制 - 请查看文档。
+
+models: # LLM 模型配置
+  default_chat_model: # 默认对话模型
+    type: chat # 模型类型：对话模型
+    model_provider: openai # 模型提供商
+    auth_type: api_key # 认证类型：api_key 或 azure_managed_identity
+    api_key: ${GRAPHRAG_CHAT_API_KEY} # Chat 模型 API 密钥，从 .env 文件中读取
+    model: ${GRAPHRAG_CHAT_MODEL} # 使用的具体模型，从环境变量中读取
+    api_base: ${GRAPHRAG_CHAT_API_BASE} # Chat 模型 API 端点，从环境变量中读取
+    # api_version: 2024-05-01-preview # Chat 模型 API 版本
+    model_supports_json: true # 模型是否支持 JSON 格式输出（推荐设为 true）
+    concurrent_requests: ${GRAPHRAG_CONCURRENT_REQUESTS} # 并发请求数，从环境变量中读取
+    async_mode: threaded # 异步模式：threaded（线程）或 asyncio（异步）
+    retry_strategy: exponential_backoff # 重试策略：指数退避
+    max_retries: ${GRAPHRAG_MAX_RETRIES} # 最大重试次数，从环境变量中读取
+    # tokens_per_minute: 150_000 # 每分钟令牌限制，从环境变量中读取（null表示无限制）
+    # requests_per_minute: 10_000 # 每分钟请求限制，从环境变量中读取（null表示无限制）
+  default_embedding_model: # 默认嵌入模型
+    type: embedding # 模型类型：嵌入模型
+    model_provider: openai # 模型提供商
+    auth_type: api_key # 认证类型：api_key 或 azure_managed_identity
+    api_key: ${GRAPHRAG_EMBEDDING_API_KEY} # Embedding 模型 API 密钥，从 .env 文件中读取
+    model: ${GRAPHRAG_EMBEDDING_MODEL} # 使用的嵌入模型，从环境变量中读取
+    api_base: ${GRAPHRAG_EMBEDDING_API_BASE} # Embedding 模型 API 端点，从环境变量中读取
+    # api_version: 2024-05-01-preview # Embedding 模型 API 版本
+    concurrent_requests: ${GRAPHRAG_CONCURRENT_REQUESTS} # 并发请求数，从环境变量中读取
+    async_mode: threaded # 异步模式：threaded 或 asyncio
+    retry_strategy: exponential_backoff # 重试策略
+    max_retries: ${GRAPHRAG_MAX_RETRIES} # 最大重试次数，从环境变量中读取
+    # tokens_per_minute: 150_000 # 每分钟令牌限制，从环境变量中读取（null表示无限制）
+    # requests_per_minute: 10_000 # 每分钟请求限制，从环境变量中读取（null表示无限制）
+
+### 输入设置 ###
+
+input: # 输入数据配置
+  storage: # 存储配置
+    type: file # 存储类型：file（文件）或 blob（云存储）
+    base_dir: "input" # 输入目录
+  file_type: text # 文件类型：csv、text 或 json
+
+chunks: # 文本分块配置
+  size: ${GRAPHRAG_CHUNK_SIZE} # 每个块的大小（字符数），从环境变量中读取
+  overlap: ${GRAPHRAG_CHUNK_OVERLAP} # 块之间的重叠大小（字符数），从环境变量中读取
+  group_by_columns: [id] # 按列分组（用于 CSV 文件）
+
+### 输出/存储设置 ###
+## 如果在以下四个部分中指定了 blob 存储，
+## 必须提供 connection_string 和 container_name
+
+output: # 输出配置
+  type: file # 存储类型：file、blob 或 cosmosdb
+  base_dir: "output" # 输出目录
+    
+cache: # 缓存配置
+  type: file # 存储类型：file、blob 或 cosmosdb
+  base_dir: "cache" # 缓存目录
+
+reporting: # 报告日志配置
+  type: file # 存储类型：file 或 blob
+  base_dir: "logs" # 日志目录
+
+vector_store: # 向量存储配置
+  default_vector_store: # 默认向量存储
+    type: lancedb # 向量数据库类型
+    db_uri: output/lancedb # 数据库 URI/路径
+    container_name: default # 容器/集合名称
+
+### 工作流设置 ###
+
+embed_text: # 文本嵌入配置
+  model_id: default_embedding_model # 使用的嵌入模型 ID
+  vector_store_id: default_vector_store # 目标向量存储 ID
+
+extract_graph: # 图提取配置
+  model_id: default_chat_model # 使用的对话模型 ID
+  prompt: "prompts/extract_graph.txt" # 提示词模板路径
+  entity_types: [organization,person,geo,event] # 要提取的实体类型
+  max_gleanings: ${GRAPHRAG_MAX_GLEANINGS} # 最大提取次数，从环境变量中读取
+
+summarize_descriptions: # 描述总结配置
+  model_id: default_chat_model # 使用的对话模型 ID
+  prompt: "prompts/summarize_descriptions.txt" # 提示词模板路径
+  max_length: ${GRAPHRAG_SUMMARIZE_MAX_LENGTH} # 总结的最大长度，从环境变量中读取
+
+extract_graph_nlp: # NLP 图提取配置
+  text_analyzer: # 文本分析器配置
+    extractor_type: regex_english # 提取器类型：regex_english、syntactic_parser 或 cfg
+  async_mode: threaded # 异步模式：threaded 或 asyncio
+
+cluster_graph: # 图聚类配置
+  max_cluster_size: ${GRAPHRAG_MAX_CLUSTER_SIZE} # 最大聚类大小，从环境变量中读取
+
+extract_claims: # 声明提取配置
+  enabled: false # 是否启用声明提取
+  model_id: default_chat_model # 使用的对话模型 ID
+  prompt: "prompts/extract_claims.txt" # 提示词模板路径
+  description: "任何可能与信息发现相关的声明或事实。" # 功能描述
+  max_gleanings: ${GRAPHRAG_MAX_GLEANINGS} # 最大提取次数，从环境变量中读取
+
+community_reports: # 社区报告配置
+  model_id: default_chat_model # 使用的对话模型 ID
+  graph_prompt: "prompts/community_report_graph.txt" # 图处理提示词路径
+  text_prompt: "prompts/community_report_text.txt" # 文本处理提示词路径
+  max_length: ${GRAPHRAG_COMMUNITY_REPORT_MAX_LENGTH} # 报告最大长度，从环境变量中读取
+  max_input_length: ${GRAPHRAG_COMMUNITY_REPORT_MAX_INPUT_LENGTH} # 输入最大长度，从环境变量中读取
+
+embed_graph: # 图嵌入配置
+  enabled: false # 是否启用图嵌入（true 时为节点生成 node2vec 嵌入）
+
+umap: # UMAP 降维配置
+  enabled: false # 是否启用 UMAP（true 时需先启用 embed_graph）
+
+snapshots: # 快照配置
+  graphml: false # 是否保存 GraphML 格式快照
+  embeddings: false # 是否保存嵌入快照
+
+### 查询设置 ###
+## 此处需要提示位置，但每种搜索方法都有多个可调节的可选参数。
+## 请参见配置文档：https://microsoft.github.io/graphrag/config/yaml/#query
+
+local_search: # 本地搜索配置
+  chat_model_id: default_chat_model # 对话模型 ID
+  embedding_model_id: default_embedding_model # 嵌入模型 ID
+  prompt: "prompts/local_search_system_prompt.txt" # 提示词模板路径
+
+global_search: # 全局搜索配置
+  chat_model_id: default_chat_model # 对话模型 ID
+  map_prompt: "prompts/global_search_map_system_prompt.txt" # Map 阶段提示词路径
+  reduce_prompt: "prompts/global_search_reduce_system_prompt.txt" # Reduce 阶段提示词路径
+  knowledge_prompt: "prompts/global_search_knowledge_system_prompt.txt" # 知识提示词路径
+
+drift_search: # 漂移搜索配置
+  chat_model_id: default_chat_model # 对话模型 ID
+  embedding_model_id: default_embedding_model # 嵌入模型 ID
+  prompt: "prompts/drift_search_system_prompt.txt" # 主提示词路径
+  reduce_prompt: "prompts/drift_search_reduce_prompt.txt" # 归并提示词路径
+
+basic_search: # 基础搜索配置
+  chat_model_id: default_chat_model # 对话模型 ID
+  embedding_model_id: default_embedding_model # 嵌入模型 ID
+  prompt: "prompts/basic_search_system_prompt.txt" # 提示词模板路径

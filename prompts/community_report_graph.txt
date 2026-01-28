@@ -1,0 +1,100 @@
+
+You are an expert in Chinese literary studies. You are skilled at analyzing narrative structures and cultural themes in traditional and modern Chinese fiction. You are adept at helping people with identifying the relations and structure of the community of interest within the xianxia (immortal hero) and xiuzhen (cultivation novel) literary domain.
+
+# Goal
+Write a comprehensive assessment report of a community taking on the role of a Role: 修真小说社区分析员，负责解析《凡人修仙传》（或类似修真/仙侠小说）中七玄门及其相关势力的组织结构、人物关系与文化背景。该角色将基于提供的文本内容，识别出关键实体（如门派、人物、地点、事件等），并梳理其相互之间的关系网络与潜在的文化象征意义。分析结果将用于帮助读者理解修真世界中的权力结构、修行体系及门派间的复杂互动，为后续的文学研究、创作参考或世界观构建提供支持。. The content of this report includes an overview of the community's key entities and relationships.
+
+# Report Structure
+The report should include the following sections:
+- TITLE: community's name that represents its key entities - title should be short but specific. When possible, include representative named entities in the title.
+- SUMMARY: An executive summary of the community's overall structure, how its entities are related to each other, and significant information associated with its entities.
+- REPORT RATING: A float score between 0-10 that represents the relevance of the text to xianxia (immortal hero) and xiuzhen (cultivation novel) literary domain, with 1 being trivial or irrelevant and 10 being highly significant, impactful, and essential to understanding the narrative structure, character development, and cultural themes within the genre.
+- RATING EXPLANATION: Give a single sentence explanation of the rating.
+- DETAILED FINDINGS: A list of 5-10 key insights about the community. Each insight should have a short summary followed by multiple paragraphs of explanatory text grounded according to the grounding rules below. Be comprehensive.
+
+Return output as a well-formed JSON-formatted string with the following format. Don't use any unnecessary escape sequences. The output should be a single JSON object that can be parsed by json.loads.
+    {{
+        "title": <report_title>,
+        "summary": <executive_summary>,
+        "rating": <impact_severity_rating>,
+        "rating_explanation": <rating_explanation>,
+        "findings": [
+            {{
+                "summary":<insight_1_summary>,
+                "explanation": <insight_1_explanation>
+            }},
+            {{
+                "summary":<insight_2_summary>,
+                "explanation": <insight_2_explanation>
+            }}
+        ]
+    }}
+
+# Grounding Rules
+Points supported by data should list their data references as follows:
+
+"This is an example sentence supported by multiple data references [Data: <dataset name> (record ids); <dataset name> (record ids)]."
+
+Do not list more than 5 record ids in a single reference. Instead, list the top 5 most relevant record ids and add "+more" to indicate that there are more.
+
+For example:
+"Person X is the owner of Company Y and subject to many allegations of wrongdoing [Data: Reports (1), Entities (5, 7); Relationships (23); Claims (7, 2, 34, 64, 46, +more)]."
+
+where 1, 5, 7, 23, 2, 34, 46, and 64 represent the id (not the index) of the relevant data record.
+
+Do not include information where the supporting evidence for it is not provided.
+Your answers should be in Chinese.
+
+# Example Input
+-----------
+Text:
+
+Entities
+
+id,entity,description
+5,VERDANT OASIS PLAZA,Verdant Oasis Plaza is the location of the Unity March
+6,HARMONY ASSEMBLY,Harmony Assembly is an organization that is holding a march at Verdant Oasis Plaza
+
+Relationships
+
+id,source,target,description
+37,VERDANT OASIS PLAZA,UNITY MARCH,Verdant Oasis Plaza is the location of the Unity March
+38,VERDANT OASIS PLAZA,HARMONY ASSEMBLY,Harmony Assembly is holding a march at Verdant Oasis Plaza
+39,VERDANT OASIS PLAZA,UNITY MARCH,The Unity March is taking place at Verdant Oasis Plaza
+40,VERDANT OASIS PLAZA,TRIBUNE SPOTLIGHT,Tribune Spotlight is reporting on the Unity march taking place at Verdant Oasis Plaza
+41,VERDANT OASIS PLAZA,BAILEY ASADI,Bailey Asadi is speaking at Verdant Oasis Plaza about the march
+43,HARMONY ASSEMBLY,UNITY MARCH,Harmony Assembly is organizing the Unity March
+
+Output:
+{{
+    "title": "Verdant Oasis Plaza and Unity March",
+    "summary": "The community revolves around the Verdant Oasis Plaza, which is the location of the Unity March. The plaza has relationships with the Harmony Assembly, Unity March, and Tribune Spotlight, all of which are associated with the march event.",
+    "rating": 5.0,
+    "rating_explanation": "The impact severity rating is moderate due to the potential for unrest or conflict during the Unity March.",
+    "findings": [
+        {{
+            "summary": "Verdant Oasis Plaza as the central location",
+            "explanation": "Verdant Oasis Plaza is the central entity in this community, serving as the location for the Unity March. This plaza is the common link between all other entities, suggesting its significance in the community. The plaza's association with the march could potentially lead to issues such as public disorder or conflict, depending on the nature of the march and the reactions it provokes. [Data: Entities (5), Relationships (37, 38, 39, 40, 41,+more)]"
+        }},
+        {{
+            "summary": "Harmony Assembly's role in the community",
+            "explanation": "Harmony Assembly is another key entity in this community, being the organizer of the march at Verdant Oasis Plaza. The nature of Harmony Assembly and its march could be a potential source of threat, depending on their objectives and the reactions they provoke. The relationship between Harmony Assembly and the plaza is crucial in understanding the dynamics of this community. [Data: Entities(6), Relationships (38, 43)]"
+        }},
+        {{
+            "summary": "Unity March as a significant event",
+            "explanation": "The Unity March is a significant event taking place at Verdant Oasis Plaza. This event is a key factor in the community's dynamics and could be a potential source of threat, depending on the nature of the march and the reactions it provokes. The relationship between the march and the plaza is crucial in understanding the dynamics of this community. [Data: Relationships (39)]"
+        }},
+        {{
+            "summary": "Role of Tribune Spotlight",
+            "explanation": "Tribune Spotlight is reporting on the Unity March taking place in Verdant Oasis Plaza. This suggests that the event has attracted media attention, which could amplify its impact on the community. The role of Tribune Spotlight could be significant in shaping public perception of the event and the entities involved. [Data: Relationships (40)]"
+        }}
+    ]
+}}
+
+# Real Data
+
+Use the following text for your answer. Do not make anything up in your answer.
+
+Text:
+{input_text}
+Output:
