@@ -76,6 +76,7 @@ vector_store:
 embed_text:
   model_id: default_embedding_model
   vector_store_id: default_vector_store
+  batch_size: 10
 
 extract_graph:
   model_id: default_chat_model
@@ -97,7 +98,7 @@ cluster_graph:
   max_cluster_size: 10
 
 extract_claims:
-  enabled: false
+  enabled: true
   model_id: default_chat_model
   prompt: ${GRAPHRAG_CLAIM_EXTRACTION_PROMPT_FILE}
   description: "Any claims or facts that could be relevant to information discovery."

@@ -11,7 +11,7 @@ uvicorn>=0.32.0
 graphrag==2.7.0
 
 # Data Processing
-pandas>=2.0,<3.0
+pandas>=2.2.3,<3.0
 numpy>=1.26.0,<2.0.0
 
 # LLM & Tokenization

@@ -1,11 +1,12 @@
 """
-GraphRAG FastAPI 服务器
+GraphRAG FastAPI 服务器 (适配 GraphRAG 2.7.0)
 
 该脚本实现了一个 FastAPI 服务器，提供知识图谱问答接口。
 支持本地搜索、全局搜索和综合搜索三种模式。
 
-日期: 2026-01-27
+日期: 2026-01-28
 作者: LiuJunDa
+版本: 2.0.1 (修复版 - 适配 GraphRAG 2.7.0)
 """
 
 import os
@@ -15,16 +16,21 @@ import uuid
 import json
 import re
 import pandas as pd
-import tiktoken
 import logging
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Union
 from contextlib import asynccontextmanager
 import uvicorn
 
-# GraphRAG 相关导入
+# GraphRAG 2.7.0 导入
+from graphrag.config.enums import ModelType
+from graphrag.config.models.language_model_config import LanguageModelConfig
+from graphrag.config.models.vector_store_config import VectorStoreConfig
+from graphrag.language_model.manager import ModelManager
+from graphrag.tokenizer.get_tokenizer import get_tokenizer
 from graphrag.query.context_builder.entity_extraction import EntityVectorStoreKey
 from graphrag.query.indexer_adapters import (
     read_indexer_covariates,
@@ -32,48 +38,88 @@ from graphrag.query.indexer_adapters import (
     read_indexer_relationships,
     read_indexer_reports,
     read_indexer_text_units,
+    read_indexer_communities,
 )
-from graphrag.query.input.loaders.dfs import store_entity_semantic_embeddings
-from graphrag.query.llm.oai.chat_openai import ChatOpenAI
-from graphrag.query.llm.oai.embedding import OpenAIEmbedding
-from graphrag.query.llm.oai.typing import OpenaiApiType
 from graphrag.query.question_gen.local_gen import LocalQuestionGen
 from graphrag.query.structured_search.local_search.mixed_context import LocalSearchMixedContext
 from graphrag.query.structured_search.local_search.search import LocalSearch
 from graphrag.query.structured_search.global_search.community_context import GlobalCommunityContext
 from graphrag.query.structured_search.global_search.search import GlobalSearch
 from graphrag.vector_stores.lancedb import LanceDBVectorStore
+from graphrag.config.models.vector_store_schema_config import VectorStoreSchemaConfig
 
 # 设置日志配置
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
-# 设置常量和配置。INPUT_DIR 根据自己建立的 graphrag 文件夹路径进行修改
-INPUT_DIR = "D:/PythonWork/RAG/graph_test/ragtest/inputs/artifacts"
-LANCEDB_URI = f"{INPUT_DIR}/lancedb"
-COMMUNITY_REPORT_TABLE = "create_final_community_reports"
-ENTITY_TABLE = "create_final_nodes"
-ENTITY_EMBEDDING_TABLE = "create_final_entities"
-RELATIONSHIP_TABLE = "create_final_relationships"
-COVARIATE_TABLE = "create_final_covariates"
-TEXT_UNIT_TABLE = "create_final_text_units"
+# ==================== 配置区域 ====================
+# 请根据你的实际路径和 API 设置修改以下配置
+
+# GraphRAG 项目根目录
+GRAPHRAG_ROOT = "/home/sunlight/Projects/graphrag-oneapi-exp/output"
+
+# 索引输出目录（parquet 文件所在位置）
+# 注意：GraphRAG 2.x 版本输出目录是 output/
+# 请检查你的实际目录结构
+INPUT_DIR = f"{GRAPHRAG_ROOT}"
+
+# LanceDB 向量数据库路径
+LANCEDB_URI = f"{GRAPHRAG_ROOT}/lancedb"
+
+# 数据表名称
+# GraphRAG 2.x 新版使用简化名称，旧版使用 create_final_* 前缀
+# 请根据你的 parquet 文件名调整
+USE_NEW_TABLE_NAMES = True  # 设置为 True 如果你的文件名是简化格式
+
+if USE_NEW_TABLE_NAMES:
+    # 新版文件名格式
+    COMMUNITY_TABLE = "communities"
+    COMMUNITY_REPORT_TABLE = "community_reports"
+    ENTITY_TABLE = "entities"
+    RELATIONSHIP_TABLE = "relationships"
+    COVARIATE_TABLE = "covariates"
+    TEXT_UNIT_TABLE = "text_units"
+else:
+    # 旧版文件名格式 (create_final_* 前缀)
+    COMMUNITY_TABLE = "create_final_communities"  # 可能不存在
+    COMMUNITY_REPORT_TABLE = "community_reports"
+    ENTITY_TABLE = "entities"
+    RELATIONSHIP_TABLE = "relationships"
+    COVARIATE_TABLE = "covariates"
+    TEXT_UNIT_TABLE = "text_units"
+
+# 社区层级
 COMMUNITY_LEVEL = 2
+
+# API 服务端口
 PORT = 8012
 
-# 全局变量，用于存储搜索引擎和问题生成器
+# LLM 配置
+LLM_API_BASE = "http://127.0.0.1:3000/v1"
+LLM_API_KEY = "sk-wZqb0cY5ONBebr2I9e32A07b22F24fFdA03eB53dC563223d"
+LLM_MODEL = "qwen-plus"
+
+# Embedding 配置
+EMBEDDING_API_BASE = "http://127.0.0.1:3000/v1"
+EMBEDDING_API_KEY = "sk-wZqb0cY5ONBebr2I9e32A07b22F24fFdA03eB53dC563223d"
+EMBEDDING_MODEL = "text-embedding-v1"
+
+# ==================== 配置区域结束 ====================
+
+
+# 全局变量
 local_search_engine = None
 global_search_engine = None
 question_generator = None
 
 
-# 定义 Message 类型
+# Pydantic 模型定义
 class Message(BaseModel):
     role: str
     content: str
 
 
-# 定义 ChatCompletionRequest 类
 class ChatCompletionRequest(BaseModel):
     model: str
     messages: List[Message]
@@ -89,21 +135,18 @@ class ChatCompletionRequest(BaseModel):
     user: Optional[str] = None
 
 
-# 定义 ChatCompletionResponseChoice 类
 class ChatCompletionResponseChoice(BaseModel):
     index: int
     message: Message
     finish_reason: Optional[str] = None
 
 
-# 定义 Usage 类
 class Usage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
 
 
-# 定义 ChatCompletionResponse 类
 class ChatCompletionResponse(BaseModel):
     id: str = Field(default_factory=lambda: f"chatcmpl-{uuid.uuid4().hex}")
     object: str = "chat.completion"
@@ -114,108 +157,195 @@ class ChatCompletionResponse(BaseModel):
     system_fingerprint: Optional[str] = None
 
 
+def find_parquet_file(base_dir: str, possible_names: List[str]) -> Optional[str]:
+    """
+    在目录中查找 parquet 文件，支持多种可能的文件名
+    """
+    for name in possible_names:
+        path = f"{base_dir}/{name}.parquet"
+        if os.path.exists(path):
+            logger.info(f"找到文件: {path}")
+            return path
+    return None
+
+
 async def setup_llm_and_embedder():
     """
-    设置语言模型（LLM）、token 编码器（TokenEncoder）和文本嵌入向量生成器（TextEmbedder）
+    设置语言模型（LLM）和文本嵌入模型（Embedder）
     """
-    logger.info("正在设置 LLM 和嵌入器")
-    # 实例化一个 ChatOpenAI 客户端对象
-    llm = ChatOpenAI(
-        # # 调用 gpt
-        # api_base="https://api.wlai.vip/v1",  # 请求的 API 服务地址
-        # api_key="sk-4P8HC2GD6heTwx0l8dD83f13F1014e039eC4Ac6d47877dCb",  # API Key
-        # model="gpt-4o-mini",  # 本次使用的模型
-        # api_type=OpenaiApiType.OpenAI,
-
-        # # 调用其他模型  通过 oneAPI
-        # api_base="http://139.224.72.218:3000/v1",  # 请求的 API 服务地址
-        # api_key="sk-KtEtYw4jOGtSpr4n2e06Ee978690452183Be8a1fF75cA8C5",  # API Key
-        # model="qwen-plus",  # 本次使用的模型
-        # api_type=OpenaiApiType.OpenAI,
-
-        # 调用本地大模型  通过 Ollama
-        api_base="http://127.0.0.1:3000/v1",  # 请求的 API 服务地址
-        api_key="sk-PrMSNlbfrlQH5lm1A6Ca01Ba63194892B4001d210fDf9cA9",  # API Key
-        model="qwen-plus",  # 本次使用的模型
-        api_type=OpenaiApiType.OpenAI,
-    )
-
-    # 初始化 token 编码器
-    token_encoder = tiktoken.get_encoding("cl100k_base")
-
-    # 实例化 OpenAIEmbedding 处理模型
-    text_embedder = OpenAIEmbedding(
-        # # 调用 gpt
-        # api_base="https://api.wlai.vip/v1",  # 请求的 API 服务地址
-        # api_key="sk-Soz7kmey8JKidej0AeD416B87d2547E1861d29F4F3E7A75e",  # API Key
-        # model="text-embedding-3-small",
-        # deployment_name="text-embedding-3-small",
-        # api_type=OpenaiApiType.OpenAI,
-        # max_retries=20,
-
-        # # 调用其他模型  通过 oneAPI
-        # api_base="http://139.224.72.218:3000/v1",  # 请求的 API 服务地址
-        # api_key="sk-KtEtYw4jOGtSpr4n2e06Ee978690452183Be8a1fF75cA8C5",  # API Key
-        # model="text-embedding-v1",
-        # deployment_name="text-embedding-v1",
-        # api_type=OpenaiApiType.OpenAI,
-        # max_retries=20,
-
-        # 调用本地大模型  通过 Ollama
-        api_base="http://127.0.0.1:3000/v1",  # 请求的 API 服务地址
-        api_key="sk-PrMSNlbfrlQH5lm1A6Ca01Ba63194892B4001d210fDf9cA9",  # API Key
-        model="text-embedding-v1",
-        deployment_name="text-embedding-v1",
-        api_type=OpenaiApiType.OpenAI,
+    logger.info("正在设置 LLM 和嵌入器 (GraphRAG 2.7.0 API)")
+    
+    # 配置 Chat 模型
+    chat_config = LanguageModelConfig(
+        api_key=LLM_API_KEY,
+        api_base=LLM_API_BASE,
+        type=ModelType.Chat,
+        model=LLM_MODEL,
+        model_provider="openai",
         max_retries=20,
-        
+    )
+    
+    # 创建 Chat 模型实例
+    chat_model = ModelManager().get_or_create_chat_model(
+        name="graphrag_chat",
+        model_type=ModelType.Chat,
+        config=chat_config,
+    )
+    
+    # 获取 tokenizer
+    tokenizer = get_tokenizer(chat_config)
+    
+    # 配置 Embedding 模型
+    embedding_config = LanguageModelConfig(
+        api_key=EMBEDDING_API_KEY,
+        api_base=EMBEDDING_API_BASE,
+        type=ModelType.Embedding,
+        model=EMBEDDING_MODEL,
+        model_provider="openai",
+        max_retries=20,
+    )
+    
+    # 创建 Embedding 模型实例
+    text_embedder = ModelManager().get_or_create_embedding_model(
+        name="graphrag_embedding",
+        model_type=ModelType.Embedding,
+        config=embedding_config,
     )
 
     logger.info("LLM 和嵌入器设置完成")
-    return llm, token_encoder, text_embedder
+    return chat_model, tokenizer, text_embedder
 
 
-async def load_context():
+def load_context():
     """
-    加载上下文数据，包括实体、关系、报告、文本单元和协变量
+    加载上下文数据
     """
-    logger.info("正在加载上下文数据")
+    logger.info(f"正在从 {INPUT_DIR} 加载上下文数据")
+    
     try:
-        # 使用 pandas 库从指定的路径读取实体数据表 ENTITY_TABLE，文件格式为 Parquet，并将其加载为 DataFrame
-        entity_df = pd.read_parquet(f"{INPUT_DIR}/{ENTITY_TABLE}.parquet")
-        # 读取实体嵌入向量数据表 ENTITY_EMBEDDING_TABLE，并将其加载为 DataFrame
-        entity_embedding_df = pd.read_parquet(f"{INPUT_DIR}/{ENTITY_EMBEDDING_TABLE}.parquet")
-        # 将 entity_df 和 entity_embedding_df 传入，并基于 COMMUNITY_LEVEL（社区级别）处理这些数据
-        entities = read_indexer_entities(entity_df, entity_embedding_df, COMMUNITY_LEVEL)
-        # 创建一个 LanceDBVectorStore 的实例，用于存储实体的描述嵌入向量
-        description_embedding_store = LanceDBVectorStore(collection_name="entity_description_embeddings")
-        # 通过调用 connect 方法，连接到指定的 LanceDB 数据库
+        # 读取实体数据
+        entity_path = find_parquet_file(INPUT_DIR, ["entities", "create_final_entities", "create_final_nodes"])
+        if not entity_path:
+            raise FileNotFoundError(f"未找到实体文件，请检查 {INPUT_DIR} 目录")
+        entity_df = pd.read_parquet(entity_path)
+        logger.info(f"实体记录数: {len(entity_df)}")
+        
+        # 读取社区数据（可能不存在于所有版本）
+        community_path = find_parquet_file(INPUT_DIR, ["communities", "create_final_communities"])
+        if community_path:
+            community_df = pd.read_parquet(community_path)
+            logger.info(f"社区记录数: {len(community_df)}")
+        else:
+            logger.warning("未找到社区文件，将使用实体数据构建")
+            community_df = None
+        
+        # 读取社区报告（提前读取，用于后续 communities 解析）
+        report_path = find_parquet_file(INPUT_DIR, ["community_reports", "create_final_community_reports"])
+        report_df = None
+        if report_path:
+            report_df = pd.read_parquet(report_path)
+            logger.info(f"社区报告记录数: {len(report_df)}")
+        else:
+            logger.warning("未找到社区报告文件")
+        
+        # 解析实体
+        if community_df is not None:
+            entities = read_indexer_entities(entity_df, community_df, COMMUNITY_LEVEL)
+        else:
+            entity_embedding_path = find_parquet_file(INPUT_DIR, ["create_final_entities", "entities"])
+            if entity_embedding_path and entity_embedding_path != entity_path:
+                entity_embedding_df = pd.read_parquet(entity_embedding_path)
+                entities = read_indexer_entities(entity_df, entity_embedding_df, COMMUNITY_LEVEL)
+            else:
+                entities = read_indexer_entities(entity_df, entity_df, COMMUNITY_LEVEL)
+        logger.info(f"解析后实体数: {len(entities)}")
+        
+        # 读取社区信息（用于 GlobalSearch）- 使用 report_df
+        communities = None
+        if community_df is not None and report_df is not None:
+            try:
+                communities = read_indexer_communities(community_df, report_df)
+                logger.info("社区信息解析完成")
+            except Exception as e:
+                logger.warning(f"读取社区信息失败: {e}")
+        
+        # 连接 LanceDB 向量存储
+        logger.info(f"连接 LanceDB: {LANCEDB_URI}")
+        vector_store_schema = VectorStoreSchemaConfig(
+            index_name="default-entity-description"
+        )
+        description_embedding_store = LanceDBVectorStore(
+            vector_store_schema_config=vector_store_schema
+        )
         description_embedding_store.connect(db_uri=LANCEDB_URI)
-        # 将已处理的实体数据存储到 description_embedding_store 中，用于语义搜索或其他用途
-        store_entity_semantic_embeddings(entities=entities, vectorstore=description_embedding_store)
-        relationship_df = pd.read_parquet(f"{INPUT_DIR}/{RELATIONSHIP_TABLE}.parquet")
-        relationships = read_indexer_relationships(relationship_df)
-        report_df = pd.read_parquet(f"{INPUT_DIR}/{COMMUNITY_REPORT_TABLE}.parquet")
-        reports = read_indexer_reports(report_df, entity_df, COMMUNITY_LEVEL)
-        text_unit_df = pd.read_parquet(f"{INPUT_DIR}/{TEXT_UNIT_TABLE}.parquet")
-        text_units = read_indexer_text_units(text_unit_df)
-        covariate_df = pd.read_parquet(f"{INPUT_DIR}/{COVARIATE_TABLE}.parquet")
-        claims = read_indexer_covariates(covariate_df)
-        logger.info(f"声明记录数: {len(claims)}")
-        covariates = {"claims": claims}
+        
+        # 读取关系数据
+        relationship_path = find_parquet_file(INPUT_DIR, ["relationships", "create_final_relationships"])
+        if relationship_path:
+            relationship_df = pd.read_parquet(relationship_path)
+            relationships = read_indexer_relationships(relationship_df)
+            logger.info(f"关系记录数: {len(relationships)}")
+        else:
+            relationships = []
+            logger.warning("未找到关系文件")
+        
+        # 解析社区报告
+        if report_df is not None:
+            if community_df is not None:
+                reports = read_indexer_reports(report_df, community_df, COMMUNITY_LEVEL)
+            else:
+                reports = read_indexer_reports(report_df, entity_df, COMMUNITY_LEVEL)
+            logger.info(f"报告记录数: {len(reports)}")
+        else:
+            reports = []
+        
+        # 读取文本单元
+        text_unit_path = find_parquet_file(INPUT_DIR, ["text_units", "create_final_text_units"])
+        if text_unit_path:
+            text_unit_df = pd.read_parquet(text_unit_path)
+            text_units = read_indexer_text_units(text_unit_df)
+            logger.info(f"文本单元数: {len(text_units)}")
+        else:
+            text_units = []
+            logger.warning("未找到文本单元文件")
+        
+        # 读取协变量（可选）
+        covariates = None
+        covariate_path = find_parquet_file(INPUT_DIR, ["covariates", "create_final_covariates"])
+        if covariate_path:
+            try:
+                covariate_df = pd.read_parquet(covariate_path)
+                claims = read_indexer_covariates(covariate_df)
+                logger.info(f"声明记录数: {len(claims)}")
+                covariates = {"claims": claims}
+            except Exception as e:
+                logger.warning(f"读取协变量失败: {e}")
+        
         logger.info("上下文数据加载完成")
-        return entities, relationships, reports, text_units, description_embedding_store, covariates
+        return entities, relationships, reports, text_units, description_embedding_store, covariates, communities
+    
     except Exception as e:
         logger.error(f"加载上下文数据时出错: {str(e)}")
         raise
 
-async def setup_search_engines(llm, token_encoder, text_embedder, entities, relationships, reports, text_units,
-                               description_embedding_store, covariates):
+async def setup_search_engines(
+    chat_model, 
+    tokenizer, 
+    text_embedder, 
+    entities, 
+    relationships, 
+    reports, 
+    text_units,
+    description_embedding_store, 
+    covariates,
+    communities
+):
     """
-    设置本地和全局搜索引擎、上下文构建器（ContextBuilder）、以及相关参数
+    设置本地和全局搜索引擎
     """
     logger.info("正在设置搜索引擎")
-    # 设置本地搜索引擎
+    
+    # ==================== 本地搜索引擎设置 ====================
     local_context_builder = LocalSearchMixedContext(
         community_reports=reports,
         text_units=text_units,
@@ -225,7 +355,7 @@ async def setup_search_engines(llm, token_encoder, text_embedder, entities, rela
         entity_text_embeddings=description_embedding_store,
         embedding_vectorstore_key=EntityVectorStoreKey.ID,
         text_embedder=text_embedder,
-        token_encoder=token_encoder,
+        tokenizer=tokenizer,
     )
 
     local_context_params = {
@@ -240,33 +370,32 @@ async def setup_search_engines(llm, token_encoder, text_embedder, entities, rela
         "include_community_rank": False,
         "return_candidate_context": False,
         "embedding_vectorstore_key": EntityVectorStoreKey.ID,
-        # "max_tokens": 12_000,
-        "max_tokens": 4096,
+        "max_tokens": 12_000,
     }
 
-    local_llm_params = {
-        # "max_tokens": 2_000,
-        "max_tokens": 4096,
+    local_model_params = {
+        "max_tokens": 2_000,
         "temperature": 0.0,
     }
 
     local_search_engine = LocalSearch(
-        llm=llm,
+        model=chat_model,
         context_builder=local_context_builder,
-        token_encoder=token_encoder,
-        llm_params=local_llm_params,
+        tokenizer=tokenizer,
+        model_params=local_model_params,
         context_builder_params=local_context_params,
         response_type="multiple paragraphs",
     )
 
-    # 设置全局搜索引擎
+    # ==================== 全局搜索引擎设置 ====================
     global_context_builder = GlobalCommunityContext(
         community_reports=reports,
+        communities=communities,
         entities=entities,
-        token_encoder=token_encoder,
+        tokenizer=tokenizer,
     )
 
-    global_context_builder_params = {
+    global_context_params = {
         "use_community_summary": False,
         "shuffle_data": True,
         "include_community_rank": True,
@@ -275,8 +404,7 @@ async def setup_search_engines(llm, token_encoder, text_embedder, entities, rela
         "include_community_weight": True,
         "community_weight_name": "occurrence weight",
         "normalize_community_weight": True,
-        # "max_tokens": 12_000,
-        "max_tokens": 4096,
+        "max_tokens": 12_000,
         "context_name": "Reports",
     }
 
@@ -292,161 +420,152 @@ async def setup_search_engines(llm, token_encoder, text_embedder, entities, rela
     }
 
     global_search_engine = GlobalSearch(
-        llm=llm,
+        model=chat_model,
         context_builder=global_context_builder,
-        token_encoder=token_encoder,
-        # max_data_tokens=12_000,
-        max_data_tokens=4096,
+        tokenizer=tokenizer,
+        max_data_tokens=12_000,
         map_llm_params=map_llm_params,
         reduce_llm_params=reduce_llm_params,
         allow_general_knowledge=False,
         json_mode=True,
-        context_builder_params=global_context_builder_params,
+        context_builder_params=global_context_params,
         concurrent_coroutines=32,
         response_type="multiple paragraphs",
     )
 
     logger.info("搜索引擎设置完成")
-    return local_search_engine, global_search_engine, local_context_builder, local_llm_params, local_context_params
+    return local_search_engine, global_search_engine, local_context_builder, local_model_params, local_context_params
 
 
 def format_response(response):
     """
-    格式化响应，对输入的文本进行段落分隔、添加适当的换行符，以及在代码块中增加标记
-    
-    具体步骤:
-        1. 使用正则表达式按照两个或更多的连续换行符分割文本为多个段落
-        2. 检查每个段落中是否包含代码块标记
-        3. 若包含代码块，则将代码块部分用换行符和 ``` 包围
-        4. 若不包含代码块，则将句号后面的空格替换为换行符
-        5. 将所有格式化后的段落用两个换行符连接起来
+    格式化响应
     """
-    # 使用正则表达式 \n{2, } 将输入的 response 按照两个或更多的连续换行符进行分割
     paragraphs = re.split(r'\n{2,}', response)
-    # 空列表，用于存储格式化后的段落
     formatted_paragraphs = []
-    # 遍历每个段落进行处理
     for para in paragraphs:
-        # 检查段落中是否包含代码块标记
         if '```' in para:
-            # 将段落按照``` 分割成多个部分，代码块和普通文本交替出现
             parts = para.split('```')
             for i, part in enumerate(parts):
-                # 检查当前部分的索引是否为奇数，奇数部分代表代码块
-                if i % 2 == 1:  # 这是代码块
-                    # 将代码块部分用换行符和``` 包围，并去除多余的空白字符
+                if i % 2 == 1:
                     parts[i] = f"\n```\n{part.strip()}\n```\n"
-            # 将分割后的部分重新组合成一个字符串
             para = ''.join(parts)
         else:
-            # 否则，将句子中的句号后面的空格替换为换行符，以便句子之间有明确的分隔
             para = para.replace('. ', '.\n')
-        # 将格式化后的段落添加到 formatted_paragraphs 列表
-        # strip() 方法用于移除字符串开头和结尾的空白字符（包括空格、制表符 \t、换行符 \n 等）
         formatted_paragraphs.append(para.strip())
-    # 将所有格式化后的段落用两个换行符连接起来，以形成一个具有清晰段落分隔的文本
     return '\n\n'.join(formatted_paragraphs)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    定义了一个异步函数，用于管理应用的生命周期
-    
-    函数在应用启动时执行初始化操作，如设置搜索引擎、加载上下文数据、以及初始化问题生成器
-    函数在应用关闭时执行清理操作
-    
-    @asynccontextmanager 装饰器用于创建一个异步上下文管理器
+    管理应用的生命周期
     """
-    # 启动时执行
-    # 申明引用全局变量，在函数中被初始化，并在整个应用中使用
     global local_search_engine, global_search_engine, question_generator
+    
     try:
-        logger.info("正在初始化搜索引擎和问题生成器...")
-        # 调用 setup_llm_and_embedder() 函数以设置语言模型（LLM）、token 编码器（TokenEncoder）和文本嵌入向量生成器（TextEmbedder）
-        # await 关键字表示此调用是异步的，函数将在这个操作完成后继续执行
-        llm, token_encoder, text_embedder = await setup_llm_and_embedder()
-        # 调用 load_context() 函数加载实体、关系、报告、文本单元、描述嵌入存储和协变量等数据
-        entities, relationships, reports, text_units, description_embedding_store, covariates = await load_context()
-        # 调用 setup_search_engines() 函数设置本地和全局搜索引擎、上下文构建器（ContextBuilder）、以及相关参数
-        local_search_engine, global_search_engine, local_context_builder, local_llm_params, local_context_params = await setup_search_engines(
-            llm, token_encoder, text_embedder, entities, relationships, reports, text_units,
-            description_embedding_store, covariates
+        logger.info("正在初始化搜索引擎 (GraphRAG 2.7.0)...")
+        
+        # 设置 LLM 和 Embedder
+        chat_model, tokenizer, text_embedder = await setup_llm_and_embedder()
+        
+        # 加载上下文数据
+        entities, relationships, reports, text_units, description_embedding_store, covariates, communities = load_context()
+        
+        # 设置搜索引擎
+        local_search_engine, global_search_engine, local_context_builder, local_model_params, local_context_params = await setup_search_engines(
+            chat_model, tokenizer, text_embedder, entities, relationships, reports, text_units,
+            description_embedding_store, covariates, communities
         )
-        # 使用 LocalQuestionGen 类创建一个本地问题生成器 question_generator
+        
+        # 设置问题生成器
         question_generator = LocalQuestionGen(
-            llm=llm,
+            model=chat_model,
             context_builder=local_context_builder,
-            token_encoder=token_encoder,
-            llm_params=local_llm_params,
+            tokenizer=tokenizer,
+            model_params=local_model_params,
             context_builder_params=local_context_params,
         )
-        logger.info("初始化完成")
+        
+        logger.info("✅ 初始化完成")
     except Exception as e:
-        logger.error(f"初始化过程中出错: {str(e)}")
-        # raise 关键字重新抛出异常，以确保程序不会在错误状态下继续运行
+        logger.error(f"❌ 初始化过程中出错: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise
-    # yield 关键字将控制权交还给 FastAPI 框架，使应用开始运行
-    # 分隔了启动和关闭的逻辑。在 yield 之前的代码在应用启动时运行，yield 之后的代码在应用关闭时运行
+    
     yield
-
-    # 关闭时执行
+    
     logger.info("正在关闭...")
 
-# lifespan 参数用于在应用程序生命周期的开始和结束时执行一些初始化或清理工作
-app = FastAPI(lifespan=lifespan)
+
+app = FastAPI(
+    title="GraphRAG API Server",
+    description="基于 Microsoft GraphRAG 2.7.0 的知识图谱问答服务",
+    version="2.0.1",
+    lifespan=lifespan
+)
+
+# 添加 CORS 支持
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 async def full_model_search(prompt: str):
     """
-    执行全模型搜索，包括本地检索、全局检索
+    执行全模型搜索
     """
-    local_result = await local_search_engine.asearch(prompt)
-    global_result = await global_search_engine.asearch(prompt)
-    # 格式化结果
-    formatted_result = "#综合搜索结果:\n\n"
-    formatted_result += "##本地检索结果:\n"
+    if not local_search_engine or not global_search_engine:
+        raise ValueError("搜索引擎未初始化")
+    
+    local_result = await local_search_engine.search(prompt)
+    global_result = await global_search_engine.search(prompt)
+    
+    formatted_result = "# 综合搜索结果:\n\n"
+    formatted_result += "## 本地检索结果:\n"
     formatted_result += format_response(local_result.response) + "\n\n"
-    formatted_result += "##全局检索结果:\n"
+    formatted_result += "## 全局检索结果:\n"
     formatted_result += format_response(global_result.response) + "\n\n"
     return formatted_result
 
 
-# POST 请求接口，与大模型进行知识问答
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
+    """
+    OpenAI 兼容的聊天完成接口
+    """
     if not local_search_engine or not global_search_engine:
         logger.error("搜索引擎未初始化")
         raise HTTPException(status_code=500, detail="搜索引擎未初始化")
 
     try:
-        logger.info(f"收到聊天完成请求: {request}")
+        logger.info(f"收到请求，模型: {request.model}")
         prompt = request.messages[-1].content
-        logger.info(f"处理提示: {prompt}")
+        logger.info(f"处理提示: {prompt[:100]}...")
 
-        # 根据模型选择使用不同的搜索方法
+        # 根据模型选择搜索方法
         if request.model == "graphrag-global-search:latest":
-            result = await global_search_engine.asearch(prompt)
+            result = await global_search_engine.search(prompt)
             formatted_response = format_response(result.response)
         elif request.model == "full-model:latest":
             formatted_response = await full_model_search(prompt)
-        elif request.model == "graphrag-local-search:latest":  # 默认使用本地搜索
-            result = await local_search_engine.asearch(prompt)
+        else:  # 默认本地搜索
+            result = await local_search_engine.search(prompt)
             formatted_response = format_response(result.response)
 
-        logger.info(f"格式化的搜索结果:\n {formatted_response}")
+        logger.info(f"搜索完成，响应长度: {len(formatted_response)}")
 
-        # 流式响应和非流式响应的处理
+        # 流式响应
         if request.stream:
-            # 定义一个异步生成器函数，用于生成流式数据
             async def generate_stream():
-                # 为每个流式数据片段生成一个唯一的 chunk_id
                 chunk_id = f"chatcmpl-{uuid.uuid4().hex}"
-                # 将格式化后的响应按行分割
                 lines = formatted_response.split('\n')
-                # 遍历每一行，并构建响应片段
                 for i, line in enumerate(lines):
-                    # 创建一个字典，表示流式数据的一个片段
                     chunk = {
                         "id": chunk_id,
                         "object": "chat.completion.chunk",
@@ -455,16 +574,14 @@ async def chat_completions(request: ChatCompletionRequest):
                         "choices": [
                             {
                                 "index": 0,
-                                "delta": {"content": line + '\n'},  # if i > 0 else {"role": "assistant", "content": ""},
+                                "delta": {"content": line + '\n'},
                                 "finish_reason": None
                             }
                         ]
                     }
-                    # 将片段转换为 JSON 格式并生成
-                    yield f"data: {json.dumps(chunk)}\n"
-                    # 每次生成数据后，异步等待 0.5 秒
-                    await asyncio.sleep(0.5)
-                # 生成最后一个片段，表示流式响应的结束
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                    await asyncio.sleep(0.05)
+                
                 final_chunk = {
                     "id": chunk_id,
                     "object": "chat.completion.chunk",
@@ -478,12 +595,12 @@ async def chat_completions(request: ChatCompletionRequest):
                         }
                     ]
                 }
-                yield f"data: {json.dumps(final_chunk)}\n"
-                yield "data: [DONE]\n"
+                yield f"data: {json.dumps(final_chunk)}\n\n"
+                yield "data: [DONE]\n\n"
 
-            # 返回 StreamingResponse 对象，流式传输数据，media_type 设置为 text/event-stream 以符合 SSE(Server-Sent Events) 格式
             return StreamingResponse(generate_stream(), media_type="text/event-stream")
-        # 非流式响应处理
+        
+        # 非流式响应
         else:
             response = ChatCompletionResponse(
                 model=request.model,
@@ -494,49 +611,62 @@ async def chat_completions(request: ChatCompletionRequest):
                         finish_reason="stop"
                     )
                 ],
-                # 使用情况
                 usage=Usage(
-                    # 提示文本的 tokens 数量
                     prompt_tokens=len(prompt.split()),
-                    # 完成文本的 tokens 数量
                     completion_tokens=len(formatted_response.split()),
-                    # 总 tokens 数量
                     total_tokens=len(prompt.split()) + len(formatted_response.split())
                 )
             )
-            logger.info(f"发送响应: \n\n{response}")
-            # 返回 JSONResponse 对象，其中 content 是将 response 对象转换为字典的结果
-            return JSONResponse(content=response.dict())
+            return JSONResponse(content=response.model_dump())
 
     except Exception as e:
-        logger.error(f"处理聊天完成时出错:\n\n {str(e)}")
+        logger.error(f"处理请求时出错: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# GET 请求接口，获取可用模型列表
 @app.get("/v1/models")
 async def list_models():
-    logger.info("收到模型列表请求")
+    """
+    获取可用模型列表
+    """
     current_time = int(time.time())
     models = [
         {"id": "graphrag-local-search:latest", "object": "model", "created": current_time - 100000, "owned_by": "graphrag"},
         {"id": "graphrag-global-search:latest", "object": "model", "created": current_time - 95000, "owned_by": "graphrag"},
         {"id": "full-model:latest", "object": "model", "created": current_time - 80000, "owned_by": "combined"}
     ]
+    return JSONResponse(content={"object": "list", "data": models})
 
-    response = {
-        "object": "list",
-        "data": models
+
+@app.get("/health")
+async def health_check():
+    """
+    健康检查接口
+    """
+    return {
+        "status": "healthy",
+        "version": "2.0.1",
+        "graphrag_version": "2.7.0",
+        "local_search_ready": local_search_engine is not None,
+        "global_search_ready": global_search_engine is not None,
     }
 
-    logger.info(f"发送模型列表: {response}")
-    return JSONResponse(content=response)
 
+@app.get("/")
+async def root():
+    """
+    根路径
+    """
+    return {
+        "message": "GraphRAG API Server",
+        "version": "2.0.1",
+        "docs": "/docs",
+        "health": "/health"
+    }
 
 
 if __name__ == "__main__":
-    logger.info(f"在端口 {PORT} 上启动服务器")
-    # uvicorn 是一个用于运行 ASGI 应用的轻量级、超快速的 ASGI 服务器实现
-    # 用于部署基于 FastAPI 框架的异步 Python Web 应用程序
+    logger.info(f"在端口 {PORT} 上启动 GraphRAG API 服务器")
     uvicorn.run(app, host="0.0.0.0", port=PORT)
-
