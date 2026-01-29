@@ -7,6 +7,8 @@ GraphRAG API 测试脚本 (适配 GraphRAG 2.7.0)
 日期: 2026-01-28
 作者: LiuJunDa
 """
+import os
+os.environ['no_proxy'] = 'localhost,127.0.0.1'
 
 import requests
 import json
@@ -99,13 +101,14 @@ if __name__ == "__main__":
     list_models()
     
     # 3. 测试查询
-    test_query = "韩立的名字是谁给起的？"
+    # test_query = "韩立的名字是谁给起的？"
+    test_query = "请介绍一下凡人修仙传前四章的主要内容。"
     
     # 测试全局搜索
-    # test_search("graphrag-global-search:latest", test_query)
+    test_search("graphrag-global-search:latest", test_query)
     
     # 测试本地搜索
-    test_search("graphrag-local-search:latest", test_query)
+    # test_search("graphrag-local-search:latest", test_query)
     
     # 测试综合搜索
     # test_search("full-model:latest", test_query)

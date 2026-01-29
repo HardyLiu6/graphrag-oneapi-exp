@@ -1,0 +1,31 @@
+services:
+  neo4j:
+    image: neo4j:2025.12.1
+    container_name: neo4j
+    restart: unless-stopped
+
+    ports:
+      - "17474:7474"   # HTTP / Browser
+      - "17687:7687"   # Bolt
+
+    environment:
+      - NEO4J_AUTH=neo4j/neo4j_password_change_me
+
+      # 插件：APOC + GDS
+      - NEO4J_PLUGINS=["apoc","graph-data-science"]
+
+      # 允许调用过程（关键，否则 APOC/GDS 部分过程会被拦）
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
+
+      # 内存（先按中等配置，后续可根据机器调）
+      - NEO4J_server_memory_heap_max__size=2G
+      - NEO4J_server_memory_pagecache_size=1G
+
+    volumes:
+      - ./neo4j/data:/data
+      - ./neo4j/logs:/logs
+      - ./neo4j/import:/import
+      - ./neo4j/plugins:/plugins
+      - ./neo4j/conf:/conf
+

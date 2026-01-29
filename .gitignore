@@ -55,3 +55,8 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# infra - ignore data files but keep docker-compose files
+infra/*/*
+!infra/*/docker-compose.yml
+!infra/*/docker-compose.yaml
