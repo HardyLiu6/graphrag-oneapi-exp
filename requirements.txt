@@ -43,6 +43,11 @@ torchaudio>=2.2.0
 # Transformers
 transformers>=4.44.0
 
+# Web Scraping (可选，用于 utils/spider.py)
+scrapy>=2.11.0
+beautifulsoup4>=4.12.0
+html2text>=2024.2.26
+
 # =============================================================================
 # 以下是 GraphRAG 2.7.0 的主要间接依赖 (会自动安装，列出供参考)
 # - graspologic: 图统计分析
