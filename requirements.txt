@@ -25,8 +25,10 @@ pydantic-settings>=2.5.0
 python-dotenv>=1.0.1
 
 # Async & HTTP
-asyncio>=3.4.3
 aiohttp>=3.10.0
+
+# HTTP Requests (用于 API 测试)
+requests>=2.31.0
 
 # Machine Learning & NLP
 scikit-learn>=1.5.0
@@ -43,7 +45,18 @@ torchaudio>=2.2.0
 # Transformers
 transformers>=4.44.0
 
-# Web Scraping (可选，用于 utils/spider.py)
+# Graph Processing & Visualization (用于 utils/graphrag3dknowledge.py)
+networkx>=3.2.0
+plotly>=5.18.0
+
+# Vector Database (GraphRAG 使用 LanceDB)
+lancedb>=0.5.0
+pyarrow>=14.0.0
+
+# Neo4j Graph Database (用于 utils/neo4jTest.py)
+neo4j>=5.15.0
+
+# Web Scraping (用于 utils/spider.py)
 scrapy>=2.11.0
 beautifulsoup4>=4.12.0
 html2text>=2024.2.26
