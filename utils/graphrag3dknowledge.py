@@ -1,58 +1,132 @@
 """
 GraphRAG 三维知识图谱可视化模块
+===================================================
 
-该模块提供从 Parquet 文件中读取知识图谱数据并进行三维可视化的功能。
-支持节点、边、度分布、中心性分布等多种可视化方式。
+功能描述:
+    从 GraphRAG 2.x 处理系统的 Parquet 文件中读取知识图谱数据
+    并进行三维交互式可视化。
 
-日期: 2026-01-27
+支持的可视化:
+    - 3D 网络图（节点、边、标签）
+    - 节点度分布直方图
+    - 节点中心性箱线图
+    - 两種布局子图展示
+
+依赖:
+    pandas, networkx, plotly, plotly-express
+
 作者: LiuJunDa
+日期: 2026-01-27
+更新: 2026-02-04 (GraphRAG 2.x 兼容)
 """
 
-import os  # 用于文件系统操作
-import pandas as pd  # 用于数据处理和操作
-import networkx as nx  # 用于创建和分析图结构
-import plotly.graph_objects as go  # plotly：用于创建交互式可视化，plotly.graph_objects：用于创建低级的plotly图形对象
-from plotly.subplots import make_subplots  # 用于创建子图
-import plotly.express as px  # 用于快速创建统计图表
+import os
+import sys
+import argparse
+import logging
+import tempfile
+import http.server
+import socketserver
+from pathlib import Path
+
+import pandas as pd
+import networkx as nx
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import plotly.express as px
+
+# 日志配置
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 
 def read_parquet_files(directory):
     """
-    读取指定目录下的所有 Parquet 文件并合并成一个 DataFrame
+    读取指定目录下的 Parquet 文件
     
-    使用 os.listdir 遍历目录，pd.read_parquet 读取每个文件，然后用 pd.concat 合并
+    GraphRAG 2.x 输出数据格式:
+        - entities.parquet: 帮助表（id, title, type, description, ...）
+        - relationships.parquet: 关系表（source, target, id, weight, ...）
+        - communities.parquet: 社区表（id, community, title, ...）
+    
+    此函数需要 relationships.parquet 为図数据源。
     
     参数:
         directory: 包含 Parquet 文件的目录路径
     
     返回:
-        合并后的 DataFrame，若无文件则返回空 DataFrame
+        pandas.DataFrame - 测试 relationships.parquet 并浅试提取 source/target 列
     """
-    dataframes = []
-    for filename in os.listdir(directory):
-        if filename.endswith('.parquet'):
-            file_path = os.path.join(directory, filename)
-            df = pd.read_parquet(file_path)
-            dataframes.append(df)
-    return pd.concat(dataframes, ignore_index=True) if dataframes else pd.DataFrame()
+    rel_file = Path(directory) / 'relationships.parquet'
+    
+    if not rel_file.exists():
+        logger.warning(f"资源需求文件不存在: {rel_file}")
+        logger.info("正在查找可用的 Parquet 文件...")
+        parquet_files = list(Path(directory).glob('*.parquet'))
+        if not parquet_files:
+            logger.error(f"在 {directory} 中找不到 Parquet 文件")
+            return pd.DataFrame()
+        
+        # 尝试第一个 parquet 文件
+        df = pd.read_parquet(parquet_files[0])
+        logger.info(f"使用 {parquet_files[0].name}, 列名: {df.columns.tolist()}")
+        return df
+    
+    df = pd.read_parquet(rel_file)
+    logger.info(f"成功加载 relationships.parquet, 子数: {len(df)}")
+    return df
+
+
+
 
 
 def clean_dataframe(df):
     """
-    清理 DataFrame，移除无效的行
+    清理 DataFrame
     
-    删除 source 和 target 列中的空值，将这两列转换为字符串类型
+    为了增强匠强性，房底粗曝的一些担惧:
+        - 刪除 source/target 列为空的记录
+        - 输入两列为字符串类型
+        - 移除空白值输入
     
     参数:
-        df: 需要清理的 DataFrame
+        df: 原始 DataFrame
     
     返回:
         清理后的 DataFrame
     """
+    original_count = len(df)
+    
+    # 检查是否存在 source/target 列
+    if 'source' not in df.columns or 'target' not in df.columns:
+        logger.warning(f"数据表缺少 'source' 或 'target' 列，可用列: {df.columns.tolist()}")
+        # 尝试找不到也有 title/name 等一些列
+        if 'description' in df.columns:
+            logger.info("将 'description' 的第一个记录用作测试")
+            return df.head(1)
+        return df
+    
+    # 刪除空值记录
     df = df.dropna(subset=['source', 'target'])
-    df['source'] = df['source'].astype(str)
-    df['target'] = df['target'].astype(str)
+    
+    # 一些空值可能是空字符串
+    df = df[(df['source'].astype(str).str.strip() != '') & (df['target'].astype(str).str.strip() != '')]
+    
+    # 输入两列为字符串类型
+    df['source'] = df['source'].astype(str).str.strip()
+    df['target'] = df['target'].astype(str).str.strip()
+    
+    removed_count = original_count - len(df)
+    logger.info(f"数据清理: 去除 {removed_count} 条记录, 保留 {len(df)} 条")
+    
     return df
+
+
+
 
 
 def create_knowledge_graph(df):
@@ -132,7 +206,10 @@ def create_node_link_trace(G, pos):
         node_adjacencies.append(len(adjacencies))
         node_text.append(f'节点: {node}<br>连接数: {len(adjacencies)}')
 
-    node_trace.marker.color = node_adjacencies
+    # 设置标记颜色和文本
+    marker = node_trace.marker
+    if marker is not None:
+        marker.color = node_adjacencies  # type: ignore
     node_trace.text = node_text
 
     return edge_trace, node_trace
@@ -208,7 +285,38 @@ def create_centrality_plot(G):
     return fig
 
 
-def visualize_graph_plotly(G):
+def start_http_server(html_content, port=0):
+    """
+    启动一个简单的 HTTP 服务器来托管 HTML 内容
+    
+    参数:
+        html_content: HTML 文件内容
+        port: 端口号（0 表示自动选择可用端口）
+    
+    返回:
+        (httpd, port, temp_dir): 服务器对象、实际端口、临时目录
+    """
+    # 创建临时目录存放 HTML 文件
+    temp_dir = tempfile.mkdtemp()
+    temp_file = Path(temp_dir) / 'index.html'
+    temp_file.write_text(html_content, encoding='utf-8')
+    
+    # 切换到临时目录
+    os.chdir(temp_dir)
+    
+    # 自定义 Handler，抑制日志输出
+    class QuietHandler(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass  # 不输出访问日志
+    
+    # 启动服务器
+    httpd = socketserver.TCPServer(("", port), QuietHandler)
+    actual_port = httpd.server_address[1]
+    
+    return httpd, actual_port, temp_dir
+
+
+def visualize_graph_plotly(G, output_file=None, serve=False, port=8050):
     """
     使用 Plotly 创建全面优化布局的高级交互式知识图谱可视化
     
@@ -217,14 +325,16 @@ def visualize_graph_plotly(G):
         2. 生成节点和边的轨迹
         3. 创建子图，包括 3D 图、度分布图和中心性分布图
         4. 添加交互式按钮和滑块
-        5. 优化整体布局
+        5. 保存或显示结果
     
     参数:
         G: networkx 图对象
+        output_file: 输出 HTML 文件路径（不提供则需要浏览器打开）
+        serve: 是否启动 HTTP 服务器（适用于 WSL2 环境）
+        port: HTTP 服务器端口（默认 8050，0 表示自动选择）
     """
-
     if G.number_of_nodes() == 0:
-        print("图为空。没有可视化内容。")
+        logger.error("图为空。没有可视化内容。")
         return
 
     pos = nx.spring_layout(G, dim=3)  # 3D 布局
@@ -311,59 +421,190 @@ def visualize_graph_plotly(G):
     #     legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
     # )
 
-    fig.show()
+    # 保存或显示结果
+    if output_file:
+        fig.write_html(output_file)
+        logger.info(f"✅ 可视化已保存到: {output_file}")
+        logger.info("成功! 可以打开此文件查看交互式图表")
+    elif serve:
+        # WSL2 模式：启动 HTTP 服务器
+        logger.info("🌐 启动 HTTP 服务器模式 (WSL2 兼容)...")
+        html_content = fig.to_html(include_plotlyjs=True, full_html=True)
+        
+        original_dir = os.getcwd()
+        try:
+            httpd, actual_port, temp_dir = start_http_server(html_content, port)
+            
+            url = f"http://localhost:{actual_port}"
+            logger.info("=" * 60)
+            logger.info("🚀 服务器已启动!")
+            logger.info(f"📍 请在 Windows 浏览器中打开: {url}")
+            logger.info("=" * 60)
+            logger.info("按 Ctrl+C 停止服务器")
+            
+            # 尝试自动打开浏览器 (WSL2 可以通过 wslview 或 explorer.exe 打开)
+            try:
+                # 尝试使用 Windows 的 explorer.exe 打开 URL
+                os.system(f'explorer.exe "{url}" 2>/dev/null || xdg-open "{url}" 2>/dev/null &')
+            except Exception:
+                pass  # 忽略错误，用户可以手动打开
+            
+            # 运行服务器
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            logger.info("\n👋 服务器已停止")
+        finally:
+            os.chdir(original_dir)
+            # 清理临时文件
+            import shutil
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass
+    else:
+        logger.info("正在打开浏览器...")
+        try:
+            fig.show()
+        except Exception as e:
+            logger.warning(f"自动打开浏览器失败: {e}")
+            logger.info("提示: 在 WSL2 中请使用 --serve 参数启动 HTTP 服务器")
+            logger.info("      或使用 --output 参数保存为 HTML 文件")
 
 
 def main():
     """
-    主函数，协调整个程序的执行流程
+    主函数 - 协调整个程序的执行流程
     
-    具体步骤:
-        1. 读取 Parquet 文件
-        2. 清理数据
-        3. 创建知识图谱
-        4. 打印图的统计信息
-        5. 调用可视化函数
+    流程:
+        1. 解析命令行参数
+        2. 读取 Parquet 文件
+        3. 清理数据
+        4. 创建知识图谱
+        5. 打印统计信息
+        6. 可视化图谱
     """
+    # 命令行参数配置
+    parser = argparse.ArgumentParser(
+        description='GraphRAG 三维知识图谱可视化工具',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用示例:
+    python graphrag3dknowledge.py
+    python graphrag3dknowledge.py -d /path/to/graphrag/output
+    python graphrag3dknowledge.py -d output -v
 
-    # 指定 Parquet 文件路径
-    directory = 'D:/PythonWork/RAG/graph_test/ragtest/inputs/artifacts'
-    # 读取指定目录下的所有 Parquet 文件并合并成一个 DataFrame
-    df = read_parquet_files(directory)
-
+支持的文件格式:
+    - relationships.parquet (推荐)
+    - 任何包含 source/target 列的 parquet 文件
+        """
+    )
+    
+    parser.add_argument(
+        '-d', '--directory',
+        default='/home/sunlight/Projects/graphrag-oneapi-exp/output',
+        help='GraphRAG 输出数据目录（默认: ./output）'
+    )
+    parser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='显示详细日志'
+    )
+    parser.add_argument(
+        '--output', '-o',
+        default=None,
+        help='保存为 HTML 文件，例如: output.html'
+    )
+    parser.add_argument(
+        '--serve', '-s',
+        action='store_true',
+        help='启动 HTTP 服务器模式（推荐 WSL2 环境使用）'
+    )
+    parser.add_argument(
+        '--port', '-p',
+        type=int,
+        default=8050,
+        help='HTTP 服务器端口（默认: 8050，0 表示自动选择）'
+    )
+    parser.add_argument(
+        '--min-nodes',
+        type=int,
+        default=5,
+        help='最小节点数以进行可视化（默认: 5）'
+    )
+    
+    args = parser.parse_args()
+    
+    # 设置日志级别
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+    
+    logger.info("=" * 60)
+    logger.info("🚀 GraphRAG 三维知识图谱可视化工具")
+    logger.info("=" * 60)
+    logger.info(f"数据目录: {args.directory}")
+    
+    # 检查目录是否存在
+    if not Path(args.directory).exists():
+        logger.error(f"✗ 目录不存在: {args.directory}")
+        sys.exit(1)
+    
+    # 读取指定目录下的 Parquet 文件
+    logger.info("正在读取数据...")
+    df = read_parquet_files(args.directory)
+    
     if df.empty:
-        print("在指定目录中找不到数据。")
-        return
-
-    print("原始 DataFrame 形状:", df.shape)
-    print("原始 DataFrame 列:", df.columns.tolist())
-    print("原始 DataFrame 头部:")
-    print(df.head())
-    # 清理 DataFrame，移除无效的行
+        logger.error("✗ 无法读取数据")
+        sys.exit(1)
+    
+    logger.info(f"✓ 原始数据: {df.shape[0]} 行, {df.shape[1]} 列")
+    logger.debug(f"  列名: {df.columns.tolist()}")
+    logger.debug(f"  数据预览:\n{df.head(2)}")
+    
+    # 清理 DataFrame
+    logger.info("正在清理数据...")
     df = clean_dataframe(df)
-
-    print("\n清理后的 DataFrame 形状:", df.shape)
-    print("清理后的 DataFrame 头部:")
-    print(df.head())
-
+    
     if df.empty:
-        print("清理后没有有效数据。")
-        return
-
-    # 从 DataFrame 创建知识图谱
+        logger.error("✗ 清理后没有有效数据")
+        sys.exit(1)
+    
+    # 创建知识图谱
+    logger.info("正在构建知识图谱...")
     G = create_knowledge_graph(df)
-
-    print(f"\n图统计信息:")
-    print(f"节点数: {G.number_of_nodes()}")
-    print(f"边数: {G.number_of_edges()}")
-
+    
+    logger.info("=" * 60)
+    logger.info("📊 图谱统计:")
+    logger.info("=" * 60)
+    logger.info(f"  节点数: {G.number_of_nodes()}")
+    logger.info(f"  边数: {G.number_of_edges()}")
+    
     if G.number_of_nodes() > 0:
-        # 将图 G 转换为无向图。如果 G 是有向图，转换为无向图后才能正确计算连通分量
-        print(f"连通分量数: {nx.number_connected_components(G.to_undirected())}")
-        # 对图 G 进行可视化
-        visualize_graph_plotly(G)
+        undirected = G.to_undirected()
+        logger.info(f"  连通分量数: {nx.number_connected_components(undirected)}")
+        logger.info(f"  平均度: {2 * G.number_of_edges() / G.number_of_nodes():.2f}")
+    
+    logger.info("=" * 60)
+    
+    # 可视化
+    if G.number_of_nodes() >= args.min_nodes:
+        logger.info(f"✓ 节点数 ({G.number_of_nodes()}) >= 最小要求 ({args.min_nodes})，开始可视化...")
+        
+        # 确定输出模式
+        if args.serve:
+            # HTTP 服务器模式
+            visualize_graph_plotly(G, serve=True, port=args.port)
+        elif args.output:
+            # 保存到文件
+            visualize_graph_plotly(G, output_file=args.output)
+        else:
+            # 默认：保存为 HTML 文件（WSL2 环境下更可靠）
+            dir_name = Path(args.directory).name or 'graph'
+            timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+            output_file = f"graph_3d_{dir_name}_{timestamp}.html"
+            visualize_graph_plotly(G, output_file=output_file)
     else:
-        print("图为空。无法可视化。")
+        logger.warning(f"⚠ 节点数 ({G.number_of_nodes()}) < 最小要求 ({args.min_nodes})，跳过可视化")
+        logger.warning(f"  可使用 --min-nodes {G.number_of_nodes()} 来强制可视化")
 
 
 if __name__ == "__main__":
